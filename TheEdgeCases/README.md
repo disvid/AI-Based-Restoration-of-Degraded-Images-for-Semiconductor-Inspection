@@ -37,7 +37,7 @@ exactly as saved. Any input side length is accepted — the network reflect-pads
 internally to a multiple of 8 and crops back after upscaling.
 
 ## 3. Repository layout
-'''text 
+```text 
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         SUBMISSION ENTRY                             │
 │                              run.py                                  │
@@ -140,7 +140,7 @@ internally to a multiple of 8 and crops back after upscaling.
 │                              README.md                               │
 │                    Reproducibility & Usage                           │
 └──────────────────────────────────────────────────────────────────────┘
-'''
+```
 
 ## 4. Method
 
