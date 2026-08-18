@@ -1,6 +1,6 @@
 # AI-Based Restoration of Degraded Images — KLA Problem Statement
 
-**Team:** `<team_name>` · **Event:** Hackathon 2026, SEMICON India
+**Team:** `TheEdgeCases` · **Event:** Hackathon 2026, SEMICON India
 
 Joint denoising and 2× super-resolution of degraded grayscale inspection
 images. A single feed-forward network (**JDSR-NAF**, 13.73 M parameters)
