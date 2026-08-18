@@ -271,9 +271,9 @@ Failure #3: 002534.npy | Score: 18.13 dB
 
 | File | PSNR | Noisy input / Prediction / Ground truth |
 | --- | ---: | --- |
-| `002973.npy` | 11.49 dB | ![Failure case 002973](results/examples/failure_002973.png) |
-| `000407.npy` | 15.82 dB | ![Failure case 000407](results/examples/failure_000407.png) |
-| `002534.npy` | 18.13 dB | ![Failure case 002534](results/examples/failure_002534.png) |
+| `002973.npy` | 11.49 dB | ![Failure case 002973](TheEdgeCases/results/examples/failure_002973.png) |
+| `000407.npy` | 15.82 dB | ![Failure case 000407](TheEdgeCases/results/examples/failure_000407.png) |
+| `002534.npy` | 18.13 dB | ![Failure case 002534](TheEdgeCases/results/examples/failure_002534.png) |
 
 All three worst cases share the same character: dense, high-frequency,
 near-random-looking texture content where the model cannot reliably
@@ -383,4 +383,5 @@ and evaluation tooling, never in the submitted inference path.
 
 ## 12. Contact
 
-Sourav Gupta (Team Leader) | Email: souravgupta09295@gmail.com | Repository: https://github.com/disvid/AI-Based-Restoration-of-Degraded-Images-for-Semiconductor-Inspection
+Sourav Gupta (team leader) · souravgupta09295@gmail.com
+Repository: https://github.com/disvid/AI-Based-Restoration-of-Degraded-Images-for-Semiconductor-Inspection
