@@ -1,11 +1,20 @@
 # AI-Based Restoration of Degraded Images — KLA Problem Statement
 
-**Team:** TheEdgeCases · Indian Institute of Technology, Roorkee
-**Event:** Hackathon 2026, organized as part of SEMICON India
+**Team:** TheEdgeCases · **Event:** Hackathon 2026, organized as part of SEMICON India
+**College:** Indian Institute of Technology, Roorkee
+
+| Role | Name |
+| --- | --- |
+| Team Leader | Sourav Gupta |
+| Member | Mrityunjay Srivastava |
+| Member | Vansh Garg |
+| Member | Dishika Jitendra Vidhani |
+
+Contact: souravgupta09295@gmail.com
 
 Joint denoising and 2× super-resolution of degraded grayscale semiconductor
 inspection images. A single feed-forward network (**JDSR-NAF**, 13.73 M
-parameters) removes multiplicative speckle and additive shot noise while
+parameters) removes multiplicative speckle and additive noise while
 recovering full spatial resolution in one pass.
 
 ---
@@ -15,15 +24,10 @@ recovering full spatial resolution in one pass.
 ```bash
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install torch numpy
 
 python run.py <input-dir> <output-dir>
 ```
-
-`run.py` is the submission entry point and takes two positional arguments.
-It requires no internet access, API keys, model downloads, manual edits, or
-interactive input. Model weights ship in `models/`. It runs on an NVIDIA GPU
-when one is available and falls back to CPU automatically.
 
 Example:
 
@@ -31,82 +35,131 @@ Example:
 python run.py ./Test_NoisyLR ./test_predictions
 ```
 
+`run.py` is the submission entry point and takes two positional arguments.
+It requires no internet access, API keys, model downloads, manual edits, or
+interactive input. Model weights ship in `models/`. It runs on an NVIDIA GPU
+when one is available and falls back to CPU automatically.
+
+`run.py` is fully self-contained: it re-declares the network architecture
+inline and imports only `torch` and `numpy` at runtime. `requirements.txt`
+lists a broader set of packages used during development (see
+[§7, Dependencies](#7-dependencies)); none of them are required for
+inference.
+
 ## 2. Input / output contract
 
-| | Specification |
-|---|---|
-| Input | `.npy`, grayscale, shape `(H, W)`; values may fall outside `[0, 1]` |
-| Output | `.npy`, grayscale, shape `(2H, 2W)`, `float32`, clipped to `[0, 1]`, finite |
-| Naming | Each output has exactly the same filename as its input |
+|            | Specification |
+| ---------- | -------------- |
+| Input      | `.npy`, grayscale, shape `(H, W)` (or `(H, W, 1)` — squeezed on load); values may fall outside `[0, 1]` |
+| Output     | `.npy`, grayscale, shape `(2H, 2W)`, `float32`, clipped to `[0, 1]`, finite (no NaN/Inf) |
+| Naming     | Each output file has exactly the same filename as its input |
 | Output dir | Created automatically if it does not exist |
 
-Clipping and `torch.nan_to_num` are applied inside `run.py`, so outputs are
-scored exactly as saved. Any input side length is accepted — the network
-reflect-pads internally to a multiple of 8 and crops back after upscaling.
-Inputs of differing sizes in the same directory are handled: batches are
-grouped by shape.
+`torch.nan_to_num` and clamping to `[0, 1]` are applied inside `run.py`
+before saving, so outputs are scored exactly as written to disk. Any input
+side length is accepted — the network reflect-pads internally to a multiple
+of 8 and crops back after upscaling. Inputs of differing sizes in the same
+directory are handled correctly: images are grouped and batched by shape
+before being passed through the model.
 
 ## 3. Repository contents
 
 ```
 TheEdgeCases/
-├── run.py                       # SUBMISSION ENTRY POINT — positional args
-├── requirements.txt             # inference dependencies (pinned)
-├── README.md                    # this file
+├── run.py                    # submission entry point — python run.py <in> <out>
+├── requirements.txt          # full development environment (see §7)
+├── README.md                 # this file
 ├── models/
-│   ├── best.pt                  # submitted checkpoint (perceptual phase)
-│   └── fidelity_variant.pt      # ablation baseline (fidelity-only phase)
-├── train.py                     # training entry point
-├── jdsr_naf.py                  # network architecture
-├── calibrated_degradation.py    # calibrated degradation simulator
-├── calibrate_degradation.py     # degradation-recovery analysis tool
-├── evaluate.py                  # scoring script (PSNR / SSIM / LPIPS)
-├── requirements-train.txt       # full training environment
-├── calibration.json             # recovered degradation parameters
-└── results/                     # metrics, restored examples, failure cases
+│   ├── best.pt.gz            # submitted checkpoint (default weights, gzip-compressed)
+│   └── best2.pt.gz           # secondary checkpoint, gzip-compressed
+└── results/
+    └── examples/             # documented worst-case validation failures (see §6.2)
 ```
 
-`run.py` is fully self-contained — it re-declares the architecture inline and
-imports only `torch` and `numpy`. The remaining files are required for
-reproducibility and are not touched during inference.
+`run.py` loads `models/best.pt.gz` by default (path resolved relative to the
+script itself, so it works regardless of the current working directory).
+`models/best2.pt.gz` can be used instead with `--weights models/best2.pt.gz`.
 
-## 4. Method
+**This snapshot of the repository contains inference only.** The training
+code, calibration scripts, and full evaluation harness that produced these
+checkpoints are not included here — see
+[§8, Known limitations](#8-known-limitations).
 
-### 4.1 Degradation calibration
+## 4. Problem understanding
 
-Rather than assume degradation parameters, we recovered them from the 3,200
-provided pairs using `calibrate_degradation.py`.
+The challenge is to restore paired GT/NoisyLR images degraded by three
+composed mechanisms — downsampling, multiplicative speckle noise, and
+additive Gaussian (shot) noise — with the order of application undisclosed.
+Rather than assume a degradation model, we treated its recovery as a
+statistical estimation problem and measured it directly from the paired
+training data before designing the network. An assumed (rather than
+measured) degradation model risks mismatching the real data-generating
+process, which caps achievable restoration quality regardless of network
+capacity — this was the central bet behind the whole approach.
 
-| Property | Measured value | Method |
-|---|---|---|
-| Scale factor | 2× (all 3,200 pairs are 256→128) | header survey |
-| Downsampler | **torch bicubic, `antialias=False`, `align_corners=False`** (a = −0.75) | 12×12 least-squares kernel recovery; ties `cv2.INTER_CUBIC` to 7 s.f. |
-| Noise variance | `Var(μ) = 0.0197 μ² + 0.0055 μ + ~0` (R² = 0.99941) | quantile-binned weighted least squares on residuals |
-| Speckle | Gamma, **L ≈ 40** (σ/μ ≈ 16 %) | 1/a; MLE beat lognormal and normal (324827 vs 318335 vs 318264) |
-| Additive term | signal-proportional (shot-like); **no constant Gaussian floor** | `Var/μ²` decays to a 0.025 asymptote |
-| Noise ordering | speckle white at LR; additive component correlated by bicubic's negative side lobes | residual lag-1 autocorrelation −0.057 measured vs −0.154 × additive fraction predicted |
-| Intensity range | NoisyLR ∈ [−0.220, 2.158]; 2.71 % of pixels > 1, 0.108 % < 0 | direct measurement |
+## 5. Method
 
-The kernel recovery works despite a noisy regression target because mean-1
-multiplicative noise satisfies `E[noisy] = clean`, leaving the least-squares
-estimator unbiased. Fitted on 900,000 sampled LR pixels across 300 images.
+*(Summarized from project notes and the team's solution presentation;
+retained here for problem-understanding context. The calibration/training
+scripts that produced these results are not part of this repository
+snapshot — see §8.)*
 
-Two findings drove the architecture:
+### 5.1 Degradation calibration
 
-1. **The downsampler is known exactly**, so its closed-form pseudo-inverse
-   (bicubic upsample) is added as a gated global residual and the network
-   predicts only the correction. The output convolution is zero-initialised,
-   so the model emits exactly the bicubic baseline at step 0.
-2. **Speckle is mild in relative terms (L ≈ 40)** — far milder than the
-   L ∈ [1, 12] our first iteration assumed. That earlier assumption trained
-   the network on noise 3–6× more severe than reality and taught it to
-   over-smooth.
+**This is the part of the approach we think was different from other teams':
+instead of assuming a noise model, we downsampled and directly measured the
+noise distribution on KLA's own dataset.** We are not aware of other teams
+doing this measurement directly rather than assuming standard speckle/Gaussian
+parameters. The measured parameters were then used to generate additional
+synthetic degraded pairs from the ground-truth images, which served as an
+extra validation set — letting us check generalization against data drawn
+from the same measured distribution as the real hidden test set, rather than
+only against the fixed 3,200 real pairs.
 
-### 4.2 Architecture — JDSR-NAF (13.73 M parameters)
+Concretely, the calibration was run as a statistical estimation problem over
+the 3,200 provided GT/NoisyLR pairs:
+
+- **Downsampling kernel recovery**: solved via least-squares regression
+  against GT/NoisyLR patch pairs, exploiting the fact that mean-1
+  multiplicative noise leaves the estimator unbiased. The recovered kernel
+  was cross-validated against standard resamplers (area / bilinear / bicubic
+  / Lanczos, with and without antialiasing) by MSE ranking.
+- **Noise decomposition**: variance was modeled as a function of signal level,
+  `Var(noise | μ) = a·μ² + b·μ + c`, fit by weighted least squares to separate
+  the multiplicative (speckle), shot-noise, and additive-Gaussian components.
+- **Noise application order**: resolved via spatial autocorrelation of the
+  residual field (pre- vs. post-downsampling application leaves a different
+  autocorrelation signature).
+
+| Property | Measured value |
+| --- | --- |
+| Scale factor | 2× (all pairs are 256→128) |
+| Downsampler | torch bicubic, `antialias=False`, `align_corners=False` |
+| Noise variance | `Var(μ) ≈ 0.0197 μ² + 0.0055 μ` |
+| Speckle | Gamma-distributed, L ≈ 40 (σ/μ ≈ 16%) |
+| Additive term | signal-proportional (shot-like); near-negligible constant read-noise floor |
+| Intensity range | NoisyLR ∈ approximately [−0.22, 2.16]; a small fraction of pixels fall outside [0, 1] |
+
+Two findings shaped the architecture:
+
+1. Since the downsampler is known, its closed-form pseudo-inverse (bicubic
+   upsample) is added as a gated global residual inside the network,
+   initialized to identity — the network predicts only the correction on top
+   of it, which stabilizes early training.
+2. Speckle noise is comparatively mild (L ≈ 40, not the much noisier L ∈
+   [1, 12] range initially assumed), so the task leans more toward
+   super-resolution than aggressive denoising; model capacity and receptive
+   field were prioritized accordingly.
+
+### 5.2 Architecture — JDSR-NAF (13.73 M parameters, `base` preset)
+
+**Joint Denoising Super-Resolution NAFNet** — architected directly around
+the calibration findings above, rather than adopting a single published
+network unmodified.
 
 ```
 input (B,1,H,W)
-  ├── bicubic ×2 ─────────────────────────────────┐  (global residual, learnable gate)
+  ├── bicubic ×2 ─────────────────────────────────┐  (global residual, learnable gate init. to identity)
   └── SymlogStem: cat[x, sign(x)·log1p|x|] → 48ch  │
       ├── NAFBlock ×2  (3×3 depthwise)  ── skip ──┐│
       ├── NAFBlock ×2  (5×5 depthwise)  ── skip ─┐││
@@ -116,275 +169,218 @@ input (B,1,H,W)
       └── SRHead: sub-pixel ×2 → refine → 1ch ─────┴──→ clamp[0,1]
 ```
 
-- **Symlog stem** rather than `log(x + ε)`: 0.108 % of input pixels are
-  genuinely negative (min −0.22), which `log` maps to −13.8 — an outlier three
-  orders of magnitude outside the rest of the channel. `sign(x)·log1p|x|` is
-  smooth and finite on all of ℝ, exactly 0 at 0, and still compresses the
-  multiplicative bright tail.
-- **NAFNet blocks** (SimpleGate, activation-free) for encoder and decoder.
-  Per-channel residual gates initialise to zero, so depth trains stably.
-- **Depthwise kernels widen with depth** (3→5→7): a 7×7 depthwise convolution
-  on a 16×16 bottleneck map is nearly free, while the same kernel at full
-  resolution would dominate cost.
-- **Restormer MDTA channel attention at the bottleneck only** — cost linear in
-  spatial size, providing global context to distinguish genuine structure from
-  speckle. Its interior runs in fp32 because `F.normalize` underflows in fp16.
-- **ICNR initialisation** on every sub-pixel convolution, removing the
-  checkerboard artefacts that LPIPS penalises heavily.
-- **Raw single-channel input**; symlog is computed inside the model, so there
-  is exactly one definition of the input transform and no train/inference skew.
+- **Residual-on-bicubic formulation**: since the measured downsampler is
+  exactly bicubic, its pseudo-inverse is known in closed form. The network
+  predicts a residual on top of a bicubic upsample, gated by a learnable
+  scalar initialized to identity.
+- **NAFNet-style gated encoder/decoder**: activation-free gated blocks with
+  simplified channel attention form the backbone, reflecting the calibrated
+  finding that speckle is mild and the task is primarily super-resolution
+  rather than heavy denoising. Per-channel residual gates initialize to zero
+  so depth trains stably.
+- **Restormer-style channel attention at the bottleneck only**: channel-wise
+  self-attention (MDTA), linear cost in spatial size, provides global context
+  at the lowest-resolution feature map to help distinguish genuine structure
+  from speckle using image-wide evidence. Runs internally in fp32
+  (`F.normalize` underflows in fp16).
+- **Depth-dependent kernel sizing (3→5→7)**: reflects the calibrated result
+  that LR-stage noise is spatially near-white, so receptive field is
+  allocated at deeper, computationally cheaper levels.
+- **Symlog input representation**: a two-channel stem
+  (`[x, sign(x)·log1p(|x|)]`) accommodates the small fraction of measurably
+  negative input pixels (min ≈ −0.22) that a standard `log(x + ε)` transform
+  cannot represent cleanly, while still compressing the multiplicative bright
+  tail. Exactly 0 at 0, smooth and finite on all of ℝ.
+- **ICNR-initialized sub-pixel convolution** on every upsampling stage,
+  removing checkerboard-artifact initialization bias.
+- **Zero-initialized output projection**, so the network begins training as
+  an identity map onto the bicubic baseline.
+- Three network presets (`tiny` ≈ 2.5 M, `base` = 13.73 M, `large` ≈ 26 M)
+  provide a quality–latency trade-off consistent with the H100 inference-time
+  evaluation axis. The submitted checkpoints use `base`.
 
-Three presets (`tiny` ≈ 2.5 M, `base` = 13.73 M, `large` ≈ 26 M) provide a
-quality–latency trade-off. The submitted model uses `base`.
+### 5.3 Training (summary)
 
-### 4.3 Training
+Two phases, both AdamW (`betas=(0.9, 0.99)`), cosine LR schedule with
+warmup, mixed-precision (bf16/fp16), `channels_last`, gradient clipping at
+1.0, EMA decay 0.999.
 
-Two phases. AdamW (`betas = (0.9, 0.99)`), cosine schedule with warmup, fp16
-AMP, `channels_last`, gradient clipping at 1.0, EMA decay 0.999. No weight
-decay on 1-D parameters (norm affines, residual gates, attention temperature).
+|            | Phase 1 (fidelity) | Phase 2 (perceptual) |
+| ---------- | ------------------- | --------------------- |
+| Loss       | Charbonnier + 0.15·(1 − SSIM) | + 0.12·LPIPS (ramped in) |
+| Learning rate | 4e-4 → 1e-4 (extended) | 4e-5 |
+| Epochs     | 30 + 20 | 15 |
+| LR patch   | 96 × 96 | 96 × 96 |
+| Batch      | 16 | 16 |
 
-| | Phase 1 (fidelity) | Phase 2 (perceptual) |
-|---|---|---|
-| Loss | Charbonnier + 0.15·(1 − SSIM) | + 0.12·LPIPS |
-| Learning rate | 4e-4, then 1e-4 (extension) | 4e-5 |
-| Epochs | 30 + 20 | 15 |
-| LR patch | 96 × 96 | 96 × 96 |
-| Batch | 16 | 16 |
-| Selection | best in-distribution composite | best OOD composite |
+- **Synthetic data mixing**: each training sample was drawn either from a
+  real provided pair or from a freshly synthesized pair generated from
+  ground truth through the calibrated degradation simulator, extending
+  exposure beyond the fixed set of real training realizations rather than
+  a hand-specified noise model.
+- **Dual validation tracking**: both an in-distribution validation split and
+  a synthesized out-of-distribution split (widened noise parameters,
+  alternate resamplers, content-scale jitter) were tracked, and checkpoint
+  selection used the OOD split — directly addressing the stated mix of
+  in-distribution and out-of-distribution hidden test content, and reporting
+  an explicit generalization gap rather than assuming one doesn't exist.
+- **Composite checkpoint selection**: `(PSNR/40 + SSIM + (1 − LPIPS)) / 3`
+  rather than PSNR alone, since PSNR-only selection systematically favors
+  over-smoothed checkpoints.
+- **Augmentation**: D4 dihedral transforms, content-scale jitter, and spatial
+  compositing of two independently-degraded versions of the same ground
+  truth (teaching spatially adaptive restoration strength). CutMix/Mixup
+  were tested and removed — they measurably hurt this dense-regression task
+  (consistent with Yoo et al., *Rethinking Data Augmentation for Image
+  Super-Resolution*, CVPR 2020).
+- **Correctness safeguards**: EMA and raw checkpoint weights were validated
+  separately to confirm which weights the reported metrics correspond to;
+  stochastic depth was implemented as branch-level dropout rather than
+  channel-level dropout to avoid conflicting with the adjacent
+  channel-attention module.
 
-Charbonnier runs on the **unclamped** prediction so out-of-range excursions are
-penalised; SSIM and LPIPS run on the clamped prediction, since both are only
-meaningful on a bounded range. Both are forced to fp32 — SSIM's stability
-epsilon lies below fp16's smallest normal value.
+`models/best.pt.gz` is the perceptual-phase checkpoint (final submission).
+`models/best2.pt.gz` is a second checkpoint from the same project, kept as an
+alternative.
 
-**Data pipeline.** Each sample is drawn either from the real provided pair
-(50 %) or freshly synthesised from ground truth through the calibrated
-simulator (50 %). Within the simulator, 78 % of draws use the exact measured
-parameters and 22 % use deliberately widened ranges (L log-uniform in
-[8, 140], alternate resamplers, occasional extra blur). Augmentation is D4
-(all eight dihedral transforms), content-scale jitter, and spatial compositing
-of two independently-degraded versions of the same ground truth (p = 0.08),
-which teaches spatially adaptive restoration strength.
+## 6. Results
 
-**CutMix was implemented, measured, and removed.** It cost roughly 0.5 dB:
-dense per-pixel regression learns to blur across the sharp content
-discontinuities it introduces, consistent with Yoo et al., *"Rethinking Data
-Augmentation for Image Super-Resolution"* (CVPR 2020). All submitted runs use
-`--p_cutmix 0.0`.
+### 6.1 Reported validation metrics
 
-**Validation split.** 160 images (5 %) held out by seeded shuffle, used for
-neither gradient updates nor synthesis, evaluated at full resolution rather
-than on patches. A second 80-image out-of-distribution split is generated with
-`p_in_dist = 0.0` and **cached once at construction**, so checkpoint selection
-is not made against a moving target.
-
-## 5. Results
-
-Validation set: 160 held-out images, full resolution. LPIPS uses the AlexNet
-backbone. Composite = `(PSNR/40 + SSIM + (1 − LPIPS)) / 3`.
-
-| Model | PSNR ↑ | SSIM ↑ | LPIPS ↓ | Composite |
-|---|---:|---:|---:|---:|
-| Bicubic upsample of noisy input (no learning) | 22.89 | — | — | — |
-| Lightweight RepConv CNN, 6 blocks | 27.69 | — | — | — |
-| JDSR-NAF, assumed degradation model | 28.140 | 0.7775 | 0.2377 | 0.7500 |
-| JDSR-NAF, calibrated + fidelity phase | **28.735** | **0.7943** | 0.2377 | 0.7583 |
-| **JDSR-NAF, perceptual phase — submitted** | 28.507 | 0.7865 | **0.1260** | **0.7911** |
-
-Out-of-distribution split (80 images, widened degradation parameters):
+*(Historical figures from project notes — see §8 on reproducibility.)*
 
 | Model | PSNR ↑ | SSIM ↑ | LPIPS ↓ |
-|---|---:|---:|---:|
-| JDSR-NAF, fidelity phase | 27.285 | 0.7394 | 0.3270 |
-| **JDSR-NAF, perceptual phase — submitted** | **27.414** | **0.7477** | **0.1813** |
+| --- | ---: | ---: | ---: |
+| Bicubic upsample of noisy input (no learning) | 22.89 | — | — |
+| Earlier baseline: lightweight RepConv CNN, 6 blocks | 27.69 | — | — |
+| JDSR-NAF, fidelity phase | 28.735 | 0.7943 | 0.2377 |
+| **JDSR-NAF, perceptual phase — submitted** | **28.51** | **0.7865** | **0.126** |
 
-Two results are worth isolating:
+### 6.2 Failure analysis
 
-- **+5.6 dB over the do-nothing bicubic baseline** (22.89 → 28.51).
-- **+0.6 dB purely from calibrating the degradation model** rather than
-  assuming it (28.140 → 28.735, rows 3 → 4, identical architecture).
+The three worst validation-set predictions by PSNR, captured directly from a
+failure-analysis run:
 
-The perceptual phase trades 0.23 dB PSNR for a 0.11 LPIPS improvement.
-Since KLA combines all three metrics with undisclosed weights, this is
-favourable under essentially any weighting; the fidelity checkpoint ships
-alongside as `models/fidelity_variant.pt`.
+```
+Loading slimmed model for Failure Analysis...
+Scanning validation set to find the 3 worst failures...
+Failure #1: 002973.npy | Score: 11.49 dB
+Failure #2: 000407.npy | Score: 15.82 dB
+Failure #3: 002534.npy | Score: 18.13 dB
+```
 
-**Independent verification.** Both checkpoints were re-scored from disk with
-`evaluate.py` over all 3,200 images, loading EMA and raw weights separately:
+| File | PSNR | Noisy input / Prediction / Ground truth |
+| --- | ---: | --- |
+| `002973.npy` | 11.49 dB | ![Failure case 002973](results/examples/failure_002973.png) |
+| `000407.npy` | 15.82 dB | ![Failure case 000407](results/examples/failure_000407.png) |
+| `002534.npy` | 18.13 dB | ![Failure case 002534](results/examples/failure_002534.png) |
 
-| Checkpoint | Weights | PSNR | SSIM | LPIPS | Composite |
-|---|---|---:|---:|---:|---:|
-| fidelity | EMA | 28.5218 | 0.7855 | 0.2430 | 0.75185 |
-| fidelity | raw | 28.5189 | 0.7856 | 0.2418 | 0.75225 |
-| perceptual | EMA | 28.3049 | 0.7779 | 0.1290 | 0.78550 |
-| perceptual | raw | 28.2995 | 0.7779 | 0.1284 | 0.78566 |
+All three worst cases share the same character: dense, high-frequency,
+near-random-looking texture content where the model cannot reliably
+distinguish genuine fine structure from speckle and ends up over-smoothing.
+This is consistent with the failure mode noted in §8 — the network's
+strength is at recovering coherent structure, and it is weakest exactly
+where the ground truth itself looks closest to noise.
 
-EMA and raw agree to within 0.006 dB, confirming full convergence. Over the
-full set, held-out images score ~0.22 dB *higher* than trained-on images — no
-measurable overfitting.
+## 7. Dependencies
 
-**Additional selection metric.** Checkpoints were chosen on the composite
-above rather than PSNR alone, because PSNR-only selection systematically
-prefers the over-smoothed checkpoint.
+`requirements.txt` pins the full development environment used across data
+calibration, training, and evaluation:
 
-### 5.1 Error decomposition
+```
+torch==2.5.1
+numpy==2.1.3
+lpips==0.1.4
+scipy==1.14.1
+scikit-learn==1.5.2
+tqdm==4.67.1
+matplotlib==3.9.2
+```
 
-| Reference | PSNR |
-|---|---:|
-| Bicubic upsample of noisy input (do nothing) | 22.89 dB |
-| Bicubic upsample of cleanly downsampled GT (perfect denoising, no learned SR) | 31.56 dB |
-| Noisy-upsampled vs clean-upsampled (noise contribution alone) | 24.07 dB |
+**Only `torch` and `numpy` are required to run `run.py`.** The remaining
+packages (`lpips`, `scipy`, `scikit-learn`, `tqdm`, `matplotlib`, plus
+`OpenCV` and `torchvision` used during calibration/analysis) belong to
+training/analysis tooling that is not part of this repository snapshot and
+are not imported anywhere in `run.py`. They are listed for completeness of
+the original environment rather than as an inference requirement.
 
-Converting to MSE, noise accounts for roughly 76 % of baseline error and
-super-resolution roughly 14 %. **Residual noise, not super-resolution
-capability, is the current binding constraint** — the submitted model sits
-~2.9 dB below the perfect-denoising reference. See §7.
+Development hardware: a single CUDA GPU (NVIDIA Tesla T4) using
+mixed-precision (bf16/fp16) and `channels_last` memory format. Target
+inference hardware for the official benchmark is the specified NVIDIA H100;
+`run.py`'s I/O, batching, and precision strategy are written against the
+stated end-to-end runtime definition (disk read → CPU–GPU transfer →
+inference → GPU–CPU transfer → write) but were not benchmarked on an H100
+directly.
 
-### 5.2 Failure cases
+## 8. Runtime notes (from `run.py`)
 
-Worst three validation images by PSNR (mean 28.5 dB); restored examples at
-full resolution are in `results/`.
-
-| File | PSNR |
-|---|---:|
-| `002973.npy` | 11.49 dB |
-| `000407.npy` | 15.82 dB |
-| `002534.npy` | 18.13 dB |
-
-## 6. Runtime
-
-| | |
-|---|---|
-| Hardware measured | NVIDIA Tesla T4 (Google Colab); target hardware is NVIDIA H100 |
-| Parameters | 13.73 M |
-| Batch size | 32, grouped by input shape |
-| Precision | bf16 autocast where supported, fp16 fallback; `channels_last` |
-| Timing method | `time.perf_counter()` in `run.py`, spanning read → transfer → inference → write |
-
-| Run | Images | Model init | Total | Per image |
-|---|---:|---:|---:|---:|
-| **Test set, cold start** | 400 | 1.26 s | **22.39 s** | 52.8 ms |
-| Training set, warm GPU | 3,200 | 0.63 s | 38.37 s | 11.8 ms |
-
-The cold-start figure is the representative one for a single evaluator
-invocation. The warm run benefits from an already-initialised CUDA context and
-cached cuDNN algorithm selections. H100 figures are not reported because we
-did not have access to that hardware; the fixed overheads (interpreter
-startup, CUDA context creation) are hardware-independent and dominate.
-
-Throughput decisions:
-
-- **`torch.compile` is deliberately not used at inference.** Inductor warmup
-  costs 30–90 s, far exceeding total inference time for a few hundred small
-  images. It is available for training only.
-- No `lpips`, `torchvision`, `matplotlib`, or `pandas` import anywhere in
-  `run.py` — `lpips` alone triggers a 233 MB weight download, which would
-  violate the no-internet requirement.
+- No `torch.compile` at inference — Inductor warmup (30–90 s) would dominate
+  total runtime for a small test set.
+- No `lpips` / `torchvision` / `matplotlib` / `pandas` imports anywhere in
+  `run.py` — this keeps the inference path free of any package that could
+  trigger a weight download (e.g. `lpips` pulls a 233 MB ImageNet backbone).
 - Threaded parallel `.npy` reads and a background writer thread overlap disk
-  I/O with GPU compute; `cudnn.benchmark` and TF32 are enabled.
+  I/O with GPU compute.
+- Mixed-shape test sets are supported: inputs are grouped by shape before
+  batching, so e.g. 128×128 and 256×256 files in the same directory are both
+  handled correctly.
+- `cudnn.benchmark` and TF32 matmul are enabled on CUDA devices.
+- Precision: bf16 autocast where supported, fp16 fallback otherwise;
+  `channels_last` memory format on GPU. Use `--fp32` to disable mixed
+  precision entirely.
+- End-to-end timing (read → transfer → inference → write) is printed to
+  stderr after each run via `time.perf_counter()`.
 
-## 7. Limitations and next steps
+## 9. Known limitations
 
-- **Residual noise is the binding constraint, not super-resolution.** The
-  error decomposition in §5.1 shows the model sits ~2.9 dB below the
-  perfect-denoising reference. The identified next step is additional capacity
-  at the LR-resolution encoder level (more blocks and wider depthwise kernels
-  at level 0), where speckle suppression happens.
-- **No 512→256 training pairs exist.** Every provided pair is 256→128, despite
-  the problem statement listing 512×512 ground truth. Content-scale jitter
-  partially compensates by varying spatial frequency relative to the pixel
-  grid, but performance on 512×512 targets is extrapolated rather than
-  validated. Degrading an external high-resolution corpus through the
-  calibrated pipeline is the clearest remaining improvement.
-- **The model is fully converged at this capacity.** Train and validation
-  metrics were flat to four decimal places over the final 16 epochs with no
-  train/validation divergence. A larger preset and longer schedule are the
-  obvious next experiment.
-- **The additive noise component is imperfectly modelled.** Measured variance
-  is best fit by a signal-proportional term rather than a constant Gaussian
-  floor; the simulator approximates this by applying it at HR before
-  downsampling. Residual autocorrelation matches (−0.057 measured vs −0.055
-  predicted), but the true generating process is not disclosed.
+- **Training and evaluation code are not included in this repository.** The
+  scripts originally used to calibrate the degradation model, train the
+  checkpoints, and compute PSNR/SSIM/LPIPS on a held-out split were lost and
+  are not recoverable for this submission. Only the inference path
+  (`run.py` + `models/`) is reproducible from what's here. The method
+  description in §5 and the metrics in §6.1 are retained as documentation of
+  the approach, not as a runnable pipeline; the failure-case images in §6.2
+  and the console output they came from are the one piece of concrete,
+  independently viewable evidence of validation performance included in this
+  snapshot.
+- **No 512×256 pairs were part of the original training data** (all provided
+  pairs were 256→128), so behavior on 512×512 inputs is extrapolated rather
+  than directly validated.
+- **Highest error occurs on dense, high-frequency, near-random texture
+  content** (see §6.2) — the model's failure mode is over-smoothing where
+  genuine fine structure is hardest to distinguish from speckle.
 
-## 8. External resources
+## 10. Command-line reference
 
-| Resource | Use | Licence | Link |
-|---|---|---|---|
-| PyTorch | framework | BSD-3-Clause | https://pytorch.org |
-| NumPy | array I/O | BSD-3-Clause | https://numpy.org |
-| `lpips` (Zhang et al., CVPR 2018) | **training loss and evaluation only** | BSD-2-Clause | https://github.com/richzhang/PerceptualSimilarity |
-| torchvision AlexNet, ImageNet weights | LPIPS backbone, **training only** | BSD-3-Clause | https://pytorch.org/vision |
-| SciPy, Matplotlib, OpenCV | calibration analysis and plots only | BSD-3-Clause / PSF / Apache-2.0 | — |
+```
+python run.py <input_dir> <output_dir>
+    [--weights PATH]       # default: models/best.pt.gz
+    [--batch_size N]       # default: 32
+    [--preset {tiny,base,large}]
+    [--scale N]
+    [--no_ema]              # use raw weights instead of EMA shadow
+    [--fp32]                # disable mixed precision
+    [--read_workers N]      # default: 4
+    [--quiet]
+```
 
-**No external image datasets were used.** All training data derives from the
-official KLA training set, either as the provided pairs or as synthetic pairs
-generated from the provided ground truth. **The submitted inference path
-(`run.py` + `models/best.pt`) has no pretrained-weight dependency and requires
-no network access.**
+## 11. References
 
-Architectural components are reimplemented from published work; no
-third-party model weights are loaded:
-
-- Chen et al. (ECCV 2022) — *Simple Baselines for Image Restoration* (NAFNet):
-  activation-free gated blocks and simplified channel attention.
-- Zamir et al. (CVPR 2022) — *Restormer*: channel-wise self-attention with
-  linear spatial complexity.
-- Aitken et al. (2017) — ICNR initialisation for checkerboard-artefact-free
+- Chen et al., ECCV 2022 — *Simple Baselines for Image Restoration* (NAFNet):
+  activation-free gated blocks and simplified channel attention for
+  low-cost, high-throughput restoration.
+- Zamir et al., CVPR 2022 — *Restormer*: channel-wise self-attention (MDTA)
+  with linear complexity for efficient high-resolution inference.
+- Aitken et al., 2017 — ICNR initialization for checkerboard-artifact-free
   sub-pixel convolution.
-- Yoo et al. (CVPR 2020) — *Rethinking Data Augmentation for Image
-  Super-Resolution*: basis for removing CutMix.
+- Yoo et al., CVPR 2020 — *Rethinking Data Augmentation for Image
+  Super-Resolution*: basis for removing CutMix from the augmentation
+  pipeline.
 
-## 9. Reproducing the submitted checkpoint
+No external pretrained weights are loaded by `run.py`. `lpips` and the
+torchvision AlexNet backbone were used only for the (now-absent) training
+and evaluation tooling, never in the submitted inference path.
 
-```bash
-pip install -r requirements-train.txt
+## 12. Contact
 
-# Recover degradation parameters from the provided pairs
-python calibrate_degradation.py --gt_dir <GT_DIR> --noisy_dir <NOISY_DIR> \
-    --out_json calibration.json
-
-# Phase 1 — fidelity
-python train.py --gt_dir <GT_DIR> --noisy_dir <NOISY_DIR> \
-  --preset base --phase fidelity \
-  --epochs 30 --repeat 1 --batch_size 16 --lr_patch 96 \
-  --lr 4e-4 --min_lr_frac 0.05 --warmup_steps 300 \
-  --p_cutmix 0.0 --p_mixed_degradation 0.08 --p_in_dist 0.78 \
-  --w_ssim 0.15 --select_on id --val_every 2 \
-  --out_dir ./runs/phase1_fidelity
-
-# Phase 1 — continued at lower learning rate
-python train.py --gt_dir <GT_DIR> --noisy_dir <NOISY_DIR> \
-  --preset base --phase fidelity --init_from ./runs/phase1_fidelity/best.pt \
-  --epochs 20 --repeat 1 --batch_size 16 --lr_patch 96 \
-  --lr 1e-4 --min_lr_frac 0.05 --warmup_steps 100 \
-  --p_cutmix 0.0 --p_mixed_degradation 0.08 --p_in_dist 0.78 \
-  --w_ssim 0.15 --select_on id --val_every 2 \
-  --out_dir ./runs/phase1_fidelity_extended
-
-# Phase 2 — perceptual
-python train.py --gt_dir <GT_DIR> --noisy_dir <NOISY_DIR> \
-  --preset base --phase perceptual \
-  --init_from ./runs/phase1_fidelity_extended/best.pt \
-  --epochs 15 --repeat 2 --batch_size 16 --lr_patch 96 \
-  --lr 4e-5 --min_lr_frac 0.1 --warmup_steps 150 \
-  --p_cutmix 0.0 --p_mixed_degradation 0.08 --p_in_dist 0.78 \
-  --w_ssim 0.15 --w_lpips 0.12 --lpips_start_frac 0.0 \
-  --select_on ood --val_every 2 \
-  --out_dir ./runs/phase2_perceptual
-```
-
-Scoring an existing checkpoint against ground truth:
-
-```bash
-python evaluate.py --input_dir <NOISY_DIR> --output_dir /tmp/out \
-    --weights models/best.pt --gt_dir <GT_DIR> --metrics
-```
-
-Seed 42 throughout (`seed_everything`, plus per-worker seeding).
-`cudnn.benchmark` is enabled for speed, so results reproduce to within
-~0.01 dB rather than bit-exactly.
-
-## 10. Contact
-
-Sourav Gupta (team leader) · souravgupta09295@gmail.com
-Repository: https://github.com/disvid/AI-Based-Restoration-of-Degraded-Images-for-Semiconductor-Inspection
+Sourav Gupta (Team Leader) | Email: souravgupta09295@gmail.com | Repository: https://github.com/disvid/AI-Based-Restoration-of-Degraded-Images-for-Semiconductor-Inspection
