@@ -1,4 +1,4 @@
-# AI-Based Restoration of Degraded Images — KLA Problem Statement
+# AI-Based Restoration of Degraded Images - KLA Problem Statement
 
 **Team:** `TheEdgeCases` · **Event:** Hackathon 2026, SEMICON India
 
