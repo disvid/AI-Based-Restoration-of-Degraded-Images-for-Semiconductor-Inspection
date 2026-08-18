@@ -37,102 +37,110 @@ exactly as saved. Any input side length is accepted — the network reflect-pads
 internally to a multiple of 8 and crops back after upscaling.
 
 ## 3. Repository layout
-                         ┌──────────────────────┐
-                         │      SUBMISSION      │
-                         │        ENTRY         │
-                         │       run.py         │
-                         └──────────┬───────────┘
-                                    │
-                                    ▼
-                    ┌─────────────────────────────┐
-                    │        MODEL CHECKPOINT     │
-                    │                             │
-                    │  models/best.pt             │
-                    │  models/fidelity_variant.pt │
-                    └──────────────┬──────────────┘
+'''text 
+┌──────────────────────────────────────────────────────────────────────┐
+│                         SUBMISSION ENTRY                             │
+│                              run.py                                  │
+└──────────────────────────────────┬───────────────────────────────────┘
                                    │
                                    ▼
-              ┌────────────────────────────────────────┐
-              │              INFERENCE PIPELINE         │
-              │                                        │
-              │  src/jdsr_naf.py                       │
-              │       │                                │
-              │       ▼                                │
-              │  src/calibrated_degradation.py         │
-              │       │                                │
-              │       ▼                                │
-              │  src/evaluate.py                       │
-              │       │                                │
-              │       ▼                                │
-              │  PSNR ── SSIM ── LPIPS                │
-              └────────────────────┬───────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         MODEL CHECKPOINTS                            │
+│                                                                      │
+│                 models/best.pt                                       │
+│                 models/fidelity_variant.pt                           │
+└──────────────────────────────────┬───────────────────────────────────┘
                                    │
                                    ▼
-                    ┌──────────────────────────┐
-                    │         RESULTS          │
-                    │                          │
-                    │  final_metrics.json      │
-                    │  results.md              │
-                    │  examples/               │
-                    │   ├─ success cases      │
-                    │   └─ failure cases      │
-                    └──────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                         INFERENCE PIPELINE                           │
+│                                                                      │
+│                         src/jdsr_naf.py                              │
+│                                │                                     │
+│                                ▼                                     │
+│                 src/calibrated_degradation.py                        │
+│                                │                                     │
+│                                ▼                                     │
+│                       src/evaluate.py                                │
+│                                │                                     │
+│                                ▼                                     │
+│                     PSNR  ──  SSIM  ──  LPIPS                        │
+└──────────────────────────────────┬───────────────────────────────────┘
+                                   │
+                                   ▼
+┌──────────────────────────────────────────────────────────────────────┐
+│                              RESULTS                                 │
+│                                                                      │
+│  results/                                                            │
+│  ├── final_metrics.json                                              │
+│  ├── results.md                                                      │
+│  └── examples/                                                       │
+│      ├── success cases                                               │
+│      └── failure cases                                               │
+└──────────────────────────────────────────────────────────────────────┘
 
 
-        ┌─────────────────────────────────────────────┐
-        │              TRAINING PIPELINE               │
-        └──────────────────────┬──────────────────────┘
-                               │
-             ┌─────────────────┴─────────────────┐
-             ▼                                   ▼
-   ┌──────────────────┐                ┌────────────────────┐
-   │ train.py         │                │ Calibration Tool   │
-   │ Training Entry   │                │                    │
-   └────────┬─────────┘                │ calibrate_         │
-            │                          │ degradation.py     │
-            ▼                          └─────────┬──────────┘
-   ┌──────────────────┐                          │
-   │ kla_train.py     │◄─────────────────────────┘
-   │                  │
-   │ Dataset          │
-   │ Metrics          │
-   │ Losses           │
-   │ Training Loop    │
-   └────────┬─────────┘
-            │
-            ▼
-   ┌──────────────────────────┐
-   │ calibrated_degradation.py│
-   │                          │
-   │ Degradation Simulator    │
-   └────────────┬─────────────┘
-                │
-                ▼
-        ┌───────────────┐
-        │ jdsr_naf.py   │
-        │ JDSR-NAF      │
-        │ Architecture  │
-        └───────┬───────┘
-                │
-                ▼
-        ┌────────────────┐
-        │ best.pt        │
-        │ Model Checkpoint│
-        └────────────────┘
+                         TRAINING PIPELINE
+                                │
+              ┌─────────────────┴─────────────────┐
+              │                                   │
+              ▼                                   ▼
+┌─────────────────────────┐          ┌─────────────────────────┐
+│       train.py          │          │ calibrate_degradation   │
+│   Training Entry Point  │          │        .py              │
+└────────────┬────────────┘          │  Degradation Recovery   │
+             │                       └────────────┬────────────┘
+             │                                    │
+             ▼                                    │
+┌─────────────────────────┐                       │
+│     kla_train.py        │◄──────────────────────┘
+│                         │
+│  • Dataset              │
+│  • Metrics              │
+│  • Losses               │
+│  • Training Loop        │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│ calibrated_degradation  │
+│          .py            │
+│                         │
+│  Calibrated Degradation │
+│       Simulator         │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│      jdsr_naf.py        │
+│                         │
+│     JDSR-NAF Model      │
+│      Architecture       │
+└────────────┬────────────┘
+             │
+             ▼
+┌─────────────────────────┐
+│        best.pt          │
+│                         │
+│   Trained Checkpoint    │
+└─────────────────────────┘
 
 
-       ┌───────────────────────────────────────────┐
-       │               CONFIGURATION               │
-       │                                           │
-       │ configs/requirements-train.txt            │
-       │ configs/calibration.json                  │
-       │                                           │
-       │ requirements.txt → inference environment  │
-       └───────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           CONFIGURATION                              │
+│                                                                      │
+│  requirements.txt              → Inference dependencies              │
+│  configs/requirements-train.txt → Training environment               │
+│  configs/calibration.json       → Recovered degradation parameters   │
+└──────────────────────────────────────────────────────────────────────┘
 
-       README.md
-       → Documentation / Reproducibility
-
+┌──────────────────────────────────────────────────────────────────────┐
+│                         DOCUMENTATION                                │
+│                                                                      │
+│                              README.md                               │
+│                    Reproducibility & Usage                           │
+└──────────────────────────────────────────────────────────────────────┘
+'''
 
 ## 4. Method
 
