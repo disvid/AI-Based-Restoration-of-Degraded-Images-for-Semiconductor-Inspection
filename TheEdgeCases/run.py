@@ -317,7 +317,7 @@ def load_model(weights_path, device, prefer_ema=True,
     model_state_dict, so both paths give the same result.
     """
     # Open the gzip file safely in read-binary mode
-    with gzip.open(args.weights, 'rb') as f:
+    with gzip.open(weights_path, 'rb') as f:
         ck = torch.load(f, map_location=device)
 
     preset = preset_override or ck.get("preset", "base")
