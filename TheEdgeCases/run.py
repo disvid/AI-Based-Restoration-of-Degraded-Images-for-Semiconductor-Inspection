@@ -23,7 +23,7 @@ Runtime notes:
     grouped by shape so mixed 128x128 / 256x256 test sets work.
   * Falls back to CPU automatically when no GPU is present.
 """
-
+import gzip
 import argparse
 import math
 import os
@@ -316,7 +316,9 @@ def load_model(weights_path, device, prefer_ema=True,
     one; slimmed submission checkpoints have EMA already baked into
     model_state_dict, so both paths give the same result.
     """
-    ck = torch.load(weights_path, map_location="cpu", weights_only=False)
+    # Open the gzip file safely in read-binary mode
+    with gzip.open(args.weights, 'rb') as f:
+        ck = torch.load(f, map_location=device)
 
     preset = preset_override or ck.get("preset", "base")
     scale = scale_override or ck.get("scale", 2)
@@ -416,7 +418,8 @@ def main():
         description="KLA image restoration — python run.py <input-dir> <output-dir>")
     ap.add_argument("input_dir", help="directory containing degraded .npy files")
     ap.add_argument("output_dir", help="directory to write restored .npy files")
-    ap.add_argument("--weights", default=os.path.join(SCRIPT_DIR, "models", "best.pt"))
+    ap.add_argument("--weights", default=os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "models", "best.pt.gz"))
     ap.add_argument("--batch_size", type=int, default=32)
     ap.add_argument("--preset", default=None, choices=list(PRESETS))
     ap.add_argument("--scale", type=int, default=None)
